@@ -2,7 +2,10 @@ package main
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
-	// "github.com/aws/aws-cdk-go/awscdk/v2/awssqs"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigateway"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
+
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 )
@@ -17,14 +20,44 @@ func NewAppStack(scope constructs.Construct, id string, props *AppStackProps) aw
 		sprops = props.StackProps
 	}
 	stack := awscdk.NewStack(scope, &id, &sprops)
+	table := awsdynamodb.NewTable(stack, jsii.String("myUserTable"), &awsdynamodb.TableProps{
+		TableName: jsii.String("userTable"),
+		PartitionKey: &awsdynamodb.Attribute{
+			Name: jsii.String("username"),
+			Type: awsdynamodb.AttributeType_STRING,
+		},
+	})
+	lamdaFunc := awslambda.NewFunction(stack, jsii.String("first-lambda-go"), &awslambda.FunctionProps{
+		Runtime: awslambda.Runtime_PROVIDED_AL2023(),
+		Code:    awslambda.AssetCode_FromAsset(jsii.String("lamda/function.zip"), nil),
+		Handler: jsii.String("main"),
+	})
+	// this is cause lambda function does not know that the table exist
+	// with this we comunicate them
+	table.GrantReadWriteData(lamdaFunc)
 
-	// The code that defines your stack goes here
+	api := awsapigateway.NewRestApi(stack, jsii.String("myApiGateway"), &awsapigateway.RestApiProps{
+		DefaultCorsPreflightOptions: &awsapigateway.CorsOptions{
+			AllowHeaders: jsii.Strings("Content-Type", "Authorization"),
+			AllowMethods: jsii.Strings("GET", "POST", "DELETE", "PUT", "OPTIONS"),
+			AllowOrigins: jsii.Strings("*"),
+		},
+		DeployOptions: &awsapigateway.StageOptions{
+			LoggingLevel: awsapigateway.MethodLoggingLevel_INFO,
+		},
+		CloudWatchRole: jsii.Bool(true),
+	})
+	integration := awsapigateway.NewLambdaIntegration(lamdaFunc, nil)
 
-	// example resource
-	// queue := awssqs.NewQueue(stack, jsii.String("AppQueue"), &awssqs.QueueProps{
-	// 	VisibilityTimeout: awscdk.Duration_Seconds(jsii.Number(300)),
-	// })
+	// define routes
+	registerResource := api.Root().AddResource(jsii.String("register"), nil)
+	registerResource.AddMethod(jsii.String("POST"), integration, nil)
 
+	loginResource := api.Root().AddResource(jsii.String("login"), nil)
+	loginResource.AddMethod(jsii.String("POST"), integration, nil)
+
+	protected := api.Root().AddResource(jsii.String("protected"), nil)
+	protected.AddMethod(jsii.String("GET"), integration, nil)
 	return stack
 }
 
